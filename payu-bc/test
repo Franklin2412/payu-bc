@@ -1,0 +1,213 @@
+import urllib, hashlib, random, string, requests, shutil, os, selenium.webdriver, difflib
+from bs4 import BeautifulSoup
+from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
+
+previous_path = 'bank_files/previous'
+current_path = 'bank_files/current'
+output_path = "bank_files/output"
+
+payu_production_url = "https://secure.payu.in/_payment";
+
+bank_codes_nb = ["ALLB", "ADBB", "AXIB", "BBKB", "BOIB", "BOMB", "CABB", "CSBN", "CBIB", "CUBB", "CRPB", "CSMSNB",
+                 "DCBCORP", "DCBB", "DENN", "DSHB", "DLSB", "FEDB", "HDFB", "ICIB", "IDBB", "IDFCNB", "INDB"];
+
+pg_codes = ["NB"];
+
+# fixed_payu_post_data = "key=0MQaQP&txnid=1470856962682&amount=1000.0&" \
+#                        "productinfo=myproduct&firstname=firstname&email=test@itsme.com&" \
+#                        "surl=https%3A%2F%2Fpayu.herokuapp.com%2Fsuccess&" \
+#                        "furl=https%3A%2F%2Fpayu.herokuapp.com%2Ffailure&" \
+#                        "hash=924488b33c09688fd96715c736b7e72b2784f82e34f151771e8b0da7d56254d555886ded573177dbc826a85746010b" \
+#                        "cfd0df5e144ce3ca9d60dafc7be0040d4e&udf1=udf1&udf2=udf2&udf3=udf3&udf4=udf4&udf5=udf5&" \
+#                        "pg=CC&bankcode=CC"
+#
+# netbanking_post_data = fixed_payu_post_data + "pg=" + pg_codes[0] + "&" + "bankcode=" + bank_codes_nb[0];
+#
+
+salt = '13p0PXZk';
+surl = 'https://payu.herokuapp.com/success'
+furl = 'https://payu.herokuapp.com/failure'
+
+data_required_for_hash = [['key', '0MQaQP'],
+                          ['txnid', ''.join(random.sample(string.lowercase + string.digits, 10))],
+                          ['amount', '10.0'],
+                          ['productinfo', ''.join(random.sample(string.lowercase, 5))],
+                          ['firstname', ''.join(random.sample(string.lowercase, 3))],
+                          ['email', 'test@itsme.com'],
+                          ['udf1', ''],
+                          ['udf2', ''],
+                          ['udf3', ''],
+                          ['udf4', ''],
+                          ['udf5', '']];
+
+'''''''''
+Method to generate hash
+# sha512(key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||SALT)
+'''''''''
+def calculate_hash(hash_params, salt):
+    hash_string = ''
+
+    for i in hash_params:
+        hash_string += i[1] + '|'
+
+    hash_string += '|||||' + salt
+
+    return hashlib.sha512(hash_string).hexdigest()
+
+
+def get_post_data(hash_params, surl, furl, pg, bankcode, hash):
+    post_data = '';
+    for i in hash_params:
+        post_data += i[0] + "=" + i[1] + "&"
+
+    return post_data + 'surl=' + urllib.quote_plus(surl) + "&furl=" + urllib.quote_plus(
+        furl) + "&pg=" + pg + "&bankcode=" + bankcode + "&hash=" + hash
+
+
+def write_file(path, data):
+    with open(path, 'w') as f:
+        f.write(data)
+
+
+def prepare_files():
+    # if previous folder is not empty remove all the files.
+    # Move all the files of current to previous.
+
+    if os.path.isdir(previous_path):
+        shutil.rmtree(previous_path)
+
+    if os.path.isdir(current_path):
+        os.rename(current_path, previous_path)
+    os.makedirs(current_path)
+
+    if os.path.isdir(output_path):
+        shutil.rmtree(output_path)
+    os.makedirs(output_path)
+
+
+prepare_files()
+
+
+def get_html_content_using_request(pg, bank_code):
+    user_agent = 'Mozilla/5.0 (Linux; Android 5.0; en-us; Xoom Build/HRI39) AppleWebKit/534.13 (KHTML, like Gecko) Version/4.0 Safari/534.13'
+
+    headers = {'User-Agent': user_agent}
+
+    post_params = get_post_data(data_required_for_hash, surl, furl, pg, bank_code,
+                                calculate_hash(data_required_for_hash))
+
+    payu_request = requests.post(payu_production_url, data=post_params, headers=headers)
+
+    payu_soup = BeautifulSoup(payu_request.text, "html.parser");
+
+    payu_form = payu_soup.find_all("form")
+    bank_url = payu_form[0].get('action')
+
+    bank_request = requests.post(bank_url, headers=headers)
+    bank_soup = BeautifulSoup(bank_request.text, "html.parser")
+    write_file(current_path + '/' + bank_code + '.html', str(bank_soup))
+
+
+# get_html_content_using_request(pg_codes[0], "HDFB")
+
+def create_web_driver_start_file(data, surl, furl, pg, bankcode, hash):
+    html_content = '<html>' + '\n' + '<body>' + '\n' + '<form action=' + payu_production_url + ' method=post>' + '\n'
+
+    for i in data:
+        html_content += '<input type="text" id="' + i[0] + '" name="' + i[0] + '" value="' + i[1] + '"> <br>' + '\n'
+
+    html_content += '<input type="text" id="surl" name="surl" value="' + surl + '"> <br>' + '\n'
+    html_content += '<input type="text" id="furl" name="furl" value="' + furl + '"> <br>' + '\n'
+    html_content += '<input type="text" id="pg" name="pg" value="' + pg + '"> <br>' + '\n'
+    html_content += '<input type="text" id="bankcode" name="bankcode" value="' + bankcode + '"> <br>' + '\n'
+    html_content += '<input type="text" id="hash" name="hash" value="' + hash + '"> <br>' + '\n'
+    html_content += '<button type="submit" id="pay_button">Pay</button>' + '\n'
+
+    html_content += '</form> </body> </html>'
+
+    write_file("start.html", html_content);
+
+
+def get_html_content_using_phantom_js(pg, bank_code):
+    user_agent = 'Mozilla/5.0 (Linux; Android 5.0; en-us; Xoom Build/HRI39) AppleWebKit/534.13 (KHTML, like Gecko) Version/4.0 Safari/534.13'
+
+    create_web_driver_start_file(data_required_for_hash, surl, furl, pg, bank_code,
+                                 calculate_hash(data_required_for_hash));
+    # driver = selenium.webdriver.PhantomJS()
+
+    caps = DesiredCapabilities.PHANTOMJS
+    caps["phantomjs.page.settings.userAgent"] = user_agent
+    driver = selenium.webdriver.PhantomJS(desired_capabilities=caps)
+
+    # do some processing
+    driver.get("start.html");
+    p = driver.find_element_by_id("pay_button")
+    p.submit()
+    write_file(current_path + '/' + bank_code + '.html', driver.page_source)
+    driver.quit()
+
+
+# get_html_content_using_phantom_js(pg_codes[0], "HDFB")
+
+# for bank_code in bank_codes_nb:
+#     get_html_content_using_phantom_js(pg_codes[0], bank_code)
+
+# get_html_content_using_phantom_js(pg_codes[0], "HDFB")
+
+# for bank_code in bank_codes_nb:
+#     get_html_content(pg_codes[0], bank_code)
+
+
+# pass absolute path to the files eg, bank_files/output/bank1.html
+def compare_files(file1, file2, output_file):
+    file1 = open(file1, 'r').readlines()
+    file2 = open(file2, 'r').readlines()
+
+    htmlDiffer = difflib.HtmlDiff()
+    htmldiffs = htmlDiffer.make_file(file1, file2)
+
+    write_file(output_file, htmldiffs)
+
+
+# compare_files(current_path + '/' + 'HDFB.html', previous_path + '/' + 'HDFB.html', output_path + '/' + 'HDFB.html')
+
+'''''
+This is app's starting point.
+pass true for running the app in debug mode.
+debug mode will print the results.
+'''''
+
+
+def main(debug):
+
+    # Files paths
+    previous_path = 'bank_files/previous'
+    current_path = 'bank_files/current'
+    output_path = "bank_files/output"
+
+    # Payu Production url for all modes of payment.
+    payu_production_url = "https://secure.payu.in/_payment";
+
+    # Payu bank codes - will keep growing.
+    bank_codes_nb = ["ALLB", "ADBB", "AXIB", "BBKB", "BOIB", "BOMB", "CABB", "CSBN", "CBIB", "CUBB", "CRPB", "CSMSNB",
+                     "DCBCORP", "DCBB", "DENN", "DSHB", "DLSB", "FEDB", "HDFB", "ICIB", "IDBB", "IDFCNB", "INDB"];
+
+    # Payu pg codes for all modes of payments.
+    pg_codes = ["NB"];
+
+    salt = '13p0PXZk';
+    surl = 'https://payu.herokuapp.com/success'
+    furl = 'https://payu.herokuapp.com/failure'
+
+    # have put the files in hash generation order.
+    data_required_for_hash = [['key', '0MQaQP'],
+                              ['txnid', ''.join(random.sample(string.lowercase + string.digits, 10))],
+                              ['amount', '10.0'],
+                              ['productinfo', ''.join(random.sample(string.lowercase, 5))],
+                              ['firstname', ''.join(random.sample(string.lowercase, 3))],
+                              ['email', 'test@itsme.com'],
+                              ['udf1', ''],
+                              ['udf2', ''],
+                              ['udf3', ''],
+                              ['udf4', ''],
+                              ['udf5', '']];
